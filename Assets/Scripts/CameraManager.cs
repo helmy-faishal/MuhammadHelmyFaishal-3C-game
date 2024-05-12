@@ -1,4 +1,5 @@
 using Cinemachine;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -16,6 +17,7 @@ public class CameraManager : MonoBehaviour
     [SerializeField] CinemachineFreeLook tppCamera;
 
     public CameraState state;
+    public Action OnChangePerspective;
 
     CinemachinePOV fppPOV;
 
@@ -45,7 +47,7 @@ public class CameraManager : MonoBehaviour
         {
             fppPOV.m_HorizontalAxis.m_Wrap = false;
             fppPOV.m_HorizontalAxis.m_MinValue = rotation.y - 45;
-            fppPOV.m_HorizontalAxis.m_MinValue = rotation.y + 45;
+            fppPOV.m_HorizontalAxis.m_MaxValue = rotation.y + 45;
         }
         else
         {
@@ -60,19 +62,32 @@ public class CameraManager : MonoBehaviour
         tppCamera.m_Lens.FieldOfView = fov;
     }
 
+    // UPDATE:
+    // Mengganti kamera dengan mengubah Priority
+    // Untuk kamera yang tidak aktif akan melakukan Recentering
     void SwitchCamera()
     {
         if (state == CameraState.ThirdPerson)
         {
             state = CameraState.FirstPerson;
-            fppCamera.gameObject.SetActive(true);
-            tppCamera.gameObject.SetActive(false);
+            fppCamera.Priority = 10;
+            tppCamera.Priority = 1;
+            tppCamera.m_YAxisRecentering.m_enabled = true;
+            tppCamera.m_RecenterToTargetHeading.m_enabled = true;
+            fppPOV.m_HorizontalRecentering.m_enabled = false;
+            fppPOV.m_VerticalRecentering.m_enabled = false;
         }
         else
         {
             state = CameraState.ThirdPerson;
-            fppCamera.gameObject.SetActive(false);
-            tppCamera.gameObject.SetActive(true);
+            fppCamera.Priority = 1;
+            tppCamera.Priority = 10;
+            tppCamera.m_YAxisRecentering.m_enabled = false;
+            tppCamera.m_RecenterToTargetHeading.m_enabled = false;
+            fppPOV.m_HorizontalRecentering.m_enabled = true;
+            fppPOV.m_VerticalRecentering.m_enabled = true;
         }
+
+        OnChangePerspective?.Invoke();
     }
 }

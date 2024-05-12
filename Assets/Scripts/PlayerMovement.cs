@@ -6,7 +6,9 @@ using UnityEngine;
 public enum PlayerStance
 {
     Stand,
-    Climb
+    Climb,
+    Crouch,
+    Glide
 }
 
 public class PlayerMovement : MonoBehaviour
@@ -15,11 +17,20 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] Transform cameraTransform;
     [SerializeField] CameraManager cameraManager;
 
-    [Header("Walk and Sprint")]
+    [Header("Walk, Sprint, Crouch")]
     [SerializeField] float walkSpeed = 350f;
     [SerializeField] float sprintSpeed = 650f;
     [SerializeField] float walkSprintTransition = 30f;
+    [SerializeField] float crouchSpeed = 325f;
+    [SerializeField] Transform crouchChecker;
     float speed;
+
+    [Header("Gliding")]
+    [SerializeField] float airDrag;
+    [SerializeField] float glideSpeed;
+    [SerializeField] Vector3 glideRotationSpeed;
+    [SerializeField] float minGlideRotationX;
+    [SerializeField] float maxGlideRotationX;
 
     [Header("Rotation")]
     [SerializeField] float rotationSmoothTime = 0.1f;
@@ -30,6 +41,7 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] Transform groundChecker;
     [SerializeField] float groundCheckerRadius = 0.2f;
     [SerializeField] LayerMask groundCheckerLayer;
+    bool isGrounded;
 
     [Header("Stair")]
     [SerializeField] Vector3 upperStairOffset = Vector3.zero;
@@ -49,12 +61,42 @@ public class PlayerMovement : MonoBehaviour
     [Tooltip("Besar offset pada sisi atas dari Climb Checker")]
     [SerializeField][Min(0f)] float topClimbOffset = 0.25f;
 
+    [Header("Punch")]
+    [SerializeField] float resetComboInterval = 5f;
+    bool isPunching;
+    int punchCombo;
+    Coroutine resetCombo;
+
+    [Header("Hit")]
+    [SerializeField] Transform hitDetector;
+    [SerializeField] float hitDetectorRadius = 1f;
+    [SerializeField] LayerMask hitLayer;
+
     PlayerStance playerStance = PlayerStance.Stand;
     Rigidbody rb;
+    CapsuleCollider capsuleCollider;
+
+    // Animation
+    Animator animator;
+    private const string VELOCITY_ANIM_PARAM = "Velocity";
+    private const string VELOCITY_X_ANIM_PARAM = "VelocityX";
+    private const string VELOCITY_Z_ANIM_PARAM = "VelocityZ";
+    private const string CHANGE_PERSPECTIIVE_ANIM_PARAM = "ChangePerspective";
+    private const string JUMP_ANIM_PARAM = "Jump";
+    private const string IS_GROUNDED_ANIM_PARAM = "IsGrounded";
+    private const string IS_CROUCH_ANIM_PARAM = "IsCrouch";
+    private const string CLIMB_VELOCITY_X_ANIM_PARAM = "ClimbVelocityX";
+    private const string CLIMB_VELOCITY_Y_ANIM_PARAM = "ClimbVelocityY";
+    private const string IS_CLIMBING_ANIM_PARAM = "IsClimbing";
+    private const string IS_GLIDING_ANIM_PARAM = "IsGliding";
+    private const string PUNCH_ANIM_PARAM = "Punch";
+    private const string COMBO_ANIM_PARAM = "Combo";
 
     private void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        animator = GetComponent<Animator>();
+        capsuleCollider = GetComponent<CapsuleCollider>();
         HideAndLockCursor();
     }
 
@@ -75,6 +117,15 @@ public class PlayerMovement : MonoBehaviour
             input.OnInputJump += JumpPlayer;
             input.OnInputClimb += StartClimb;
             input.OnInputCancelClimb += CancelClimb;
+            input.OnInputCrouch += CrouchPlayer;
+            input.OnInputGlide += StartGlide;
+            input.OnInputCancelGlide += CancelGlide;
+            input.OnInputPunch += PunchPlayer;
+        }
+
+        if (cameraManager != null)
+        {
+            cameraManager.OnChangePerspective += ChangePerspective;
         }
     }
 
@@ -87,12 +138,23 @@ public class PlayerMovement : MonoBehaviour
             input.OnInputJump -= JumpPlayer;
             input.OnInputClimb -= StartClimb;
             input.OnInputCancelClimb -= CancelClimb;
+            input.OnInputCrouch -= CrouchPlayer;
+            input.OnInputGlide -= StartGlide;
+            input.OnInputCancelGlide -= CancelGlide;
+            input.OnInputPunch -= PunchPlayer;
+        }
+
+        if (cameraManager != null)
+        {
+            cameraManager.OnChangePerspective -= ChangePerspective;
         }
     }
 
     private void Update()
     {
         CheckStep();
+        CheckIsInGround();
+        GlidePlayer();
     }
 
     void MovePlayer(Vector2 direction)
@@ -100,7 +162,12 @@ public class PlayerMovement : MonoBehaviour
         switch (playerStance)
         {
             case PlayerStance.Stand:
+            case PlayerStance.Crouch:
                 PlayerStandMovement(direction);
+                break;
+
+            case PlayerStance.Glide:
+                PlayerGlideMovement(direction);
                 break;
 
             case PlayerStance.Climb:
@@ -111,10 +178,12 @@ public class PlayerMovement : MonoBehaviour
 
     void PlayerStandMovement(Vector2 direction)
     {
+        if (isPunching) return;
+
         switch (cameraManager.state)
         {
             case CameraState.ThirdPerson:
-                if (direction.magnitude < 0.1f) return;
+                if (direction.magnitude < 0.1f) break;
 
                 float rotationAngle = Mathf.Atan2(direction.x, direction.y) * Mathf.Rad2Deg + cameraTransform.eulerAngles.y;
                 float smoothAngle = Mathf.SmoothDampAngle(transform.eulerAngles.y, rotationAngle, ref rotationSmoothVelocity, rotationSmoothTime);
@@ -137,6 +206,26 @@ public class PlayerMovement : MonoBehaviour
                 rb.AddForce(moveDirection * speed * Time.deltaTime);
                 break;
         }
+
+        Vector3 velocity = rb.velocity;
+        velocity.y = 0;
+
+        animator.SetFloat(VELOCITY_ANIM_PARAM, velocity.magnitude * direction.magnitude);
+        animator.SetFloat(VELOCITY_X_ANIM_PARAM, velocity.magnitude * direction.x);
+        animator.SetFloat(VELOCITY_Z_ANIM_PARAM, velocity.magnitude * direction.y);
+    }
+
+    void PlayerGlideMovement(Vector2 direction)
+    {
+        Vector3 rotationDegree = transform.eulerAngles;
+        // Input Vertikal
+        rotationDegree.x += glideRotationSpeed.x * direction.y * Time.deltaTime;
+        rotationDegree.x = Mathf.Clamp(rotationDegree.x, minGlideRotationX, maxGlideRotationX);
+        // Input Horizontal
+        rotationDegree.y += glideRotationSpeed.y * direction.x * Time.deltaTime;
+        rotationDegree.z += glideRotationSpeed.z * direction.x * Time.deltaTime;
+
+        transform.rotation = Quaternion.Euler(rotationDegree);
     }
 
     void PlayerClimbMovement(Vector2 direction)
@@ -148,7 +237,17 @@ public class PlayerMovement : MonoBehaviour
         // Membatasi pergerakan saat memanjat
         moveDirection = ClampClimbMovement(moveDirection);
 
-        rb.AddForce(moveDirection * climbSpeed * Time.deltaTime);
+        if (moveDirection.magnitude > 0)
+        {
+            rb.AddForce(moveDirection * climbSpeed * Time.deltaTime);
+        }
+        else
+        {
+            rb.velocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+        animator.SetFloat(CLIMB_VELOCITY_X_ANIM_PARAM, rb.velocity.magnitude * moveDirection.x);
+        animator.SetFloat(CLIMB_VELOCITY_Y_ANIM_PARAM, rb.velocity.magnitude * moveDirection.y);
     }
 
     // Mengecek apakah bagian sisi masih dapat dipanjat
@@ -286,6 +385,8 @@ public class PlayerMovement : MonoBehaviour
 
     void SprintPlayer(bool isSprint)
     {
+        if (playerStance != PlayerStance.Stand) return;
+
         float sprint = isSprint ? 1 : -1;
         speed += sprint * walkSprintTransition * Time.deltaTime;
         speed = Mathf.Clamp(speed, walkSpeed, sprintSpeed);
@@ -293,15 +394,22 @@ public class PlayerMovement : MonoBehaviour
 
     void JumpPlayer()
     {
-        if (IsGrounded())
+        if (isGrounded && animator.GetCurrentAnimatorStateInfo(0).IsTag("CanJump"))
         {
             rb.AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
+            animator.SetTrigger(JUMP_ANIM_PARAM);
         }
     }
 
-    bool IsGrounded()
+    void CheckIsInGround()
     {
-        return Physics.CheckSphere(groundChecker.position, groundCheckerRadius, groundCheckerLayer);
+        isGrounded = Physics.CheckSphere(groundChecker.position, groundCheckerRadius, groundCheckerLayer);
+        animator.SetBool(IS_GROUNDED_ANIM_PARAM, isGrounded);
+
+        if (isGrounded)
+        {
+            CancelGlide();
+        }
     }
 
     void CheckStep()
@@ -323,7 +431,7 @@ public class PlayerMovement : MonoBehaviour
         bool isInFrontClimb = Physics.Raycast(climbChecker.position, transform.forward, out RaycastHit hit, climbCheckerDistance, climbCheckerLayer);
         bool isNotClimb = playerStance != PlayerStance.Climb;
 
-        if (IsGrounded() && isInFrontClimb && isNotClimb)
+        if (isGrounded && isInFrontClimb && isNotClimb)
         {
             // Mendapatkan titik terdekat antara Climbable dengan Player
             Vector3 closestPointFromClimbable = hit.collider.bounds.ClosestPoint(transform.position);
@@ -341,6 +449,9 @@ public class PlayerMovement : MonoBehaviour
             rb.useGravity = false;
             cameraManager.SetFPPClampedCamera(true, transform.rotation.eulerAngles);
             cameraManager.SetTPPFieldOfView(70);
+
+            animator.SetBool(IS_CLIMBING_ANIM_PARAM, true);
+            capsuleCollider.center = Vector3.up * 0.9f;
         }
     }
 
@@ -353,7 +464,118 @@ public class PlayerMovement : MonoBehaviour
             transform.position -= transform.forward;
             cameraManager.SetFPPClampedCamera(false, transform.rotation.eulerAngles);
             cameraManager.SetTPPFieldOfView(40);
+
+            animator.SetBool(IS_CLIMBING_ANIM_PARAM, false);
+            capsuleCollider.center = Vector3.up * 0.9f;
         }
+    }
+
+    void ChangePerspective()
+    {
+        animator.SetTrigger(CHANGE_PERSPECTIIVE_ANIM_PARAM);
+    }
+
+    void CrouchPlayer()
+    {
+        if (playerStance == PlayerStance.Stand)
+        {
+            playerStance = PlayerStance.Crouch;
+            animator.SetBool(IS_CROUCH_ANIM_PARAM, true);
+            speed = crouchSpeed;
+            capsuleCollider.height = 1.3f;
+            capsuleCollider.center = Vector3.up * 0.66f;
+        }
+        else if (playerStance == PlayerStance.Crouch)
+        {
+            if (!Physics.Raycast(crouchChecker.position, Vector3.up))
+            {
+                playerStance = PlayerStance.Stand;
+                animator.SetBool(IS_CROUCH_ANIM_PARAM, false);
+                speed = walkSpeed;
+                capsuleCollider.height = 1.8f;
+                capsuleCollider.center = Vector3.up * 0.9f;
+            }
+        }
+    }
+
+    void GlidePlayer()
+    {
+        if (playerStance != PlayerStance.Glide) return;
+
+        float lift = transform.eulerAngles.x;
+        Vector3 upForce = transform.up * (lift + airDrag);
+        Vector3 forwardForce = transform.forward * glideSpeed;
+        Vector3 totalForce = upForce + forwardForce;
+        rb.AddForce(totalForce * Time.deltaTime);
+    }
+
+    void StartGlide()
+    {
+        if (playerStance != PlayerStance.Glide && playerStance != PlayerStance.Climb && !isGrounded)
+        {
+            playerStance = PlayerStance.Glide;
+            animator.SetBool(IS_GLIDING_ANIM_PARAM, true);
+            cameraManager.SetFPPClampedCamera(true, transform.rotation.eulerAngles);
+        }
+    }
+
+    void CancelGlide()
+    {
+        if (playerStance == PlayerStance.Glide)
+        {
+            playerStance = PlayerStance.Stand;
+            animator.SetBool(IS_GLIDING_ANIM_PARAM, false);
+            cameraManager.SetFPPClampedCamera(false, transform.rotation.eulerAngles);
+        }
+    }
+
+    void PunchPlayer()
+    {
+        if (!isPunching && playerStance == PlayerStance.Stand)
+        {
+            isPunching = true;
+
+            if (punchCombo < 3)
+            {
+                punchCombo++;
+            }
+            else
+            {
+                punchCombo = 1;
+            }
+
+            animator.SetTrigger(PUNCH_ANIM_PARAM);
+            animator.SetInteger(COMBO_ANIM_PARAM, punchCombo);
+        }
+    }
+
+    void EndPunch()
+    {
+        isPunching = false;
+
+        if (resetCombo != null)
+        {
+            StopCoroutine(resetCombo);
+        }
+        resetCombo = StartCoroutine(ResetComboCoroutine());
+    }
+
+    void HitObject()
+    {
+        Collider[] hitObjects = Physics.OverlapSphere(hitDetector.position, hitDetectorRadius, hitLayer);
+        foreach (Collider obj in hitObjects)
+        {
+            if (obj.gameObject != null)
+            {
+                Destroy(obj.gameObject);
+            }
+        }
+    }
+
+    IEnumerator ResetComboCoroutine()
+    {
+        yield return new WaitForSeconds(resetComboInterval);
+        punchCombo = 0;
     }
 
     private void OnDrawGizmosSelected()
@@ -376,5 +598,9 @@ public class PlayerMovement : MonoBehaviour
         Gizmos.DrawRay(climbChecker.TransformPoint(Vector3.right * horizontalClimbOffset), transform.forward * climbCheckerDistance);
         Gizmos.DrawRay(climbChecker.TransformPoint(Vector3.left * horizontalClimbOffset), transform.forward * climbCheckerDistance);
         Gizmos.DrawRay(climbChecker.TransformPoint(Vector3.up * topClimbOffset), transform.forward * climbCheckerDistance);
+
+        // Crouch Checker
+        Gizmos.color = Color.red;
+        Gizmos.DrawRay(crouchChecker.position, Vector3.up);
     }
 }

@@ -11,6 +11,10 @@ public class InputManager : MonoBehaviour
     public Action OnInputClimb;
     public Action OnInputCancelClimb;
     public Action OnChangePOV;
+    public Action OnInputCrouch;
+    public Action OnInputGlide;
+    public Action OnInputCancelGlide;
+    public Action OnInputPunch;
 
     private void Update()
     {
@@ -18,8 +22,11 @@ public class InputManager : MonoBehaviour
         CheckSprintInput();
         CheckJumpInput();
         CheckClimbInput();
-        CheckCancelClimbInput();
+        CheckCancelInput();
         CheckChangePOV();
+        CheckCrouchInput();
+        CheckGlideInput();
+        CheckPunchInput();
     }
 
     void CheckMoveInput()
@@ -53,11 +60,12 @@ public class InputManager : MonoBehaviour
         }
     }
 
-    void CheckCancelClimbInput()
+    void CheckCancelInput()
     {
         if (Input.GetKeyDown(KeyCode.C))
         {
             OnInputCancelClimb?.Invoke();
+            OnInputCancelGlide?.Invoke();
         }
     }
 
@@ -66,6 +74,30 @@ public class InputManager : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Q))
         {
             OnChangePOV?.Invoke();
+        }
+    }
+
+    void CheckCrouchInput()
+    {
+        if (Input.GetKeyDown(KeyCode.LeftControl) || Input.GetKeyDown(KeyCode.RightControl))
+        {
+            OnInputCrouch?.Invoke();
+        }
+    }
+
+    void CheckGlideInput()
+    {
+        if (Input.GetKeyDown(KeyCode.G))
+        {
+            OnInputGlide?.Invoke();
+        }
+    }
+
+    void CheckPunchInput()
+    {
+        if (Input.GetKeyDown(KeyCode.Mouse0))
+        {
+            OnInputPunch?.Invoke();
         }
     }
 }
