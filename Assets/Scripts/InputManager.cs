@@ -15,6 +15,7 @@ public class InputManager : MonoBehaviour
     public Action OnInputGlide;
     public Action OnInputCancelGlide;
     public Action OnInputPunch;
+    public Action OnInputMainMenu;
 
     private void Update()
     {
@@ -27,6 +28,7 @@ public class InputManager : MonoBehaviour
         CheckCrouchInput();
         CheckGlideInput();
         CheckPunchInput();
+        CheckMainMenuInput();
     }
 
     void CheckMoveInput()
@@ -98,6 +100,14 @@ public class InputManager : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Mouse0))
         {
             OnInputPunch?.Invoke();
+        }
+    }
+
+    void CheckMainMenuInput()
+    {
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            OnInputMainMenu?.Invoke();
         }
     }
 }

@@ -16,6 +16,7 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] InputManager input;
     [SerializeField] Transform cameraTransform;
     [SerializeField] CameraManager cameraManager;
+    [SerializeField] PlayerAudioManager audioManager;
 
     [Header("Walk, Sprint, Crouch")]
     [SerializeField] float walkSpeed = 350f;
@@ -246,8 +247,11 @@ public class PlayerMovement : MonoBehaviour
             rb.velocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
         }
-        animator.SetFloat(CLIMB_VELOCITY_X_ANIM_PARAM, rb.velocity.magnitude * moveDirection.x);
-        animator.SetFloat(CLIMB_VELOCITY_Y_ANIM_PARAM, rb.velocity.magnitude * moveDirection.y);
+
+        float horizontalMove = moveDirection.x + moveDirection.z;
+        animator.SetFloat(CLIMB_VELOCITY_X_ANIM_PARAM, rb.velocity.magnitude * horizontalMove);
+        float verticalMove = moveDirection.y;
+        animator.SetFloat(CLIMB_VELOCITY_Y_ANIM_PARAM, rb.velocity.magnitude * verticalMove);
     }
 
     // Mengecek apakah bagian sisi masih dapat dipanjat
@@ -516,6 +520,7 @@ public class PlayerMovement : MonoBehaviour
             playerStance = PlayerStance.Glide;
             animator.SetBool(IS_GLIDING_ANIM_PARAM, true);
             cameraManager.SetFPPClampedCamera(true, transform.rotation.eulerAngles);
+            audioManager.PlayGlideSFX();
         }
     }
 
@@ -526,6 +531,7 @@ public class PlayerMovement : MonoBehaviour
             playerStance = PlayerStance.Stand;
             animator.SetBool(IS_GLIDING_ANIM_PARAM, false);
             cameraManager.SetFPPClampedCamera(false, transform.rotation.eulerAngles);
+            audioManager.StopGlideSFX();
         }
     }
 
